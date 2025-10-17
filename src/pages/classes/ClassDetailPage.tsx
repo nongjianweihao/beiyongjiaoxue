@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
 
@@ -10,6 +10,7 @@ import { RadarChart } from "../../components/RadarChart";
 import { SpeedInput, type SpeedRow } from "../../components/SpeedInput";
 import { EnergyBoard } from "../../components/EnergyBoard";
 import { RewardToast } from "../../components/RewardToast";
+import { ClassSharePanel } from "../../components/classes/ClassSharePanel";
 import { ClassSquadPanel } from "../../components/squads/ClassSquadPanel";
 import { PuzzleGrid } from "../../components/PuzzleGrid";
 import { StudentAvatar } from "../../components/StudentAvatar";
@@ -155,6 +156,8 @@ function createDimensionScoreMap(): Record<PerformanceDimensionId, number> {
 
 function createEmptyPerformanceDraft(): PerformanceDraft {
   return {
+    performanceId: generateId(),
+    noteId: generateId(),
     stars: DEFAULT_PERFORMANCE_SCORE,
     comment: '',
     presetIds: [],
@@ -211,6 +214,7 @@ export function ClassDetailPage() {
   const [reloadToken, setReloadToken] = useState(0);
   const [classEntity, setClassEntity] = useState<ClassEntity | null>(null);
   const [students, setStudents] = useState<Student[]>([]);
+  const [allStudents, setAllStudents] = useState<Student[]>([]);
   const [template, setTemplate] = useState<TrainingTemplate | null>(null);
   const [rankMoves, setRankMoves] = useState<RankMove[]>([]);
   const [warriorNodes, setWarriorNodes] = useState<WarriorPathNode[]>([]);
@@ -243,6 +247,7 @@ export function ClassDetailPage() {
   const [planStartDate, setPlanStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [assigningPlan, setAssigningPlan] = useState(false);
+  const [pendingStudentId, setPendingStudentId] = useState('');
 
   const [showMissionDetail, setShowMissionDetail] = useState(false);
   const [activeBlockKey, setActiveBlockKey] = useState<string | null>(null);
@@ -254,6 +259,7 @@ export function ClassDetailPage() {
     participantIds: string[];
   } | null>(null);
   const [flippingCardId, setFlippingCardId] = useState<string | null>(null);
+  const fallbackSessionDateRef = useRef<string>(new Date().toISOString());
 
   useEffect(() => {
     setPerformanceDrafts((prev) => {
@@ -359,6 +365,13 @@ export function ClassDetailPage() {
   const activePerformanceDraft = activePerformanceStudent
     ? performanceDrafts[activePerformanceStudent.id] ?? createEmptyPerformanceDraft()
     : null;
+
+  const availableStudentsToAdd = useMemo(() => {
+    const existingIds = new Set(students.map((student) => student.id));
+    return allStudents
+      .filter((student) => !existingIds.has(student.id))
+      .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+  }, [allStudents, students]);
 
   const handleOpenPuzzleFlip = useCallback(
     (cardId: string) => {
@@ -710,6 +723,9 @@ export function ClassDetailPage() {
   }, [activeBlockKey, currentSessionPlan]);
   const activeIntensityMeta = activeBlock?.intensity ? INTENSITY_META[activeBlock.intensity] : undefined;
   const activeStimulusLabel = activeBlock?.stimulus ? STIMULUS_LABEL[activeBlock.stimulus] : undefined;
+  const hasActiveDrills = !!(activeBlock && activeBlock.drills && activeBlock.drills.length);
+  const hasActiveGames = !!(activeBlock && activeBlock.games && activeBlock.games.length);
+  const activeBlockColumnsClass = hasActiveDrills && hasActiveGames ? 'lg:grid-cols-2' : 'lg:grid-cols-1';
 
   const puzzleCards = useMemo(() => {
     if (!puzzleTemplate || !puzzleQuest) return [];
@@ -794,6 +810,53 @@ export function ClassDetailPage() {
       nextSession: index < sortedPlanSessions.length - 1 ? sortedPlanSessions[index + 1] : null,
     };
   }, [selectedSession, sortedPlanSessions]);
+
+  const restoreActiveSession = useCallback(
+    (record: SessionRecord, resolvedStudents: Student[]) => {
+      fallbackSessionDateRef.current = record.date;
+      setSession(record);
+      if (record.attendance?.length) {
+        setAttendance(record.attendance);
+      } else {
+        setAttendance(
+          resolvedStudents.map((student) => ({ studentId: student.id, present: true })),
+        );
+      }
+      setSpeedRows(
+        (record.speed ?? []).map(({ studentId, window, mode, reps }) => ({
+          studentId,
+          window,
+          mode,
+          reps,
+        })),
+      );
+      setFreestyle(
+        (record.freestyle ?? []).map((item) => ({
+          id: item.id,
+          studentId: item.studentId,
+          moveId: item.moveId,
+          passed: item.passed,
+          note: item.note,
+        })),
+      );
+      const overrideMap: Record<string, number | undefined> = {};
+      record.consumeOverrides?.forEach((item) => {
+        overrideMap[item.studentId] = item.consume;
+      });
+      setConsumeOverrides(overrideMap);
+      const completionMap: Record<string, boolean> = {};
+      record.executedBlockIds?.forEach((id) => {
+        completionMap[id] = true;
+      });
+      setBlockCompletion(completionMap);
+      setAttendanceAwarded(Boolean(record.attendanceEnergyAwarded));
+      setStatus('已恢复上次未结课的课堂进度');
+      setPendingFlip(null);
+      setFlippingCardId(null);
+      setPendingStudentId('');
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!missionBlockEntries.length) {
@@ -893,10 +956,10 @@ export function ClassDetailPage() {
 
         const studentList = await studentsRepo.list();
         if (disposed) return;
-        const filtered = rosterIds.length
+        setAllStudents(studentList);
+        const rosterStudents = rosterIds.length
           ? studentList.filter((student) => rosterIds.includes(student.id))
           : [];
-        setStudents(filtered);
 
         if (cls.templateId) {
           const tpl = await templatesRepo.get(cls.templateId);
@@ -916,9 +979,10 @@ export function ClassDetailPage() {
           qualityList,
           trainingDrillList,
           trainingGameList,
+          sessionHistory,
         ] = await Promise.all([
 
-          
+
 
           db.rankMoves.toArray(),
           db.warriorNodes.toArray(),
@@ -928,6 +992,7 @@ export function ClassDetailPage() {
           trainingRepo.listQualities(),
           trainingRepo.listDrills(),
           trainingRepo.listGames(),
+          sessionsRepo.listByClass(classId),
         ]);
 
         if (disposed) return;
@@ -942,20 +1007,63 @@ export function ClassDetailPage() {
         setTrainingGames(trainingGameList);
         setSelectedTemplateId((prev) => prev || templateList[0]?.id || '');
 
+        const lastClosed = [...sessionHistory].filter((item) => item.closed).pop();
+        setPreviousSpeedRecords(lastClosed?.speed ?? []);
+
+        const activeSession = [...sessionHistory].filter((item) => !item.closed).pop() ?? null;
+        const resolvedStudents = (() => {
+          if (!activeSession) return rosterStudents;
+          const extraStudents = activeSession.attendance
+            .map(({ studentId }) => studentList.find((student) => student.id === studentId))
+            .filter((student): student is Student => Boolean(student));
+          const map = new Map<string, Student>();
+          [...rosterStudents, ...extraStudents].forEach((student) => {
+            map.set(student.id, student);
+          });
+          return Array.from(map.values());
+        })();
+        setStudents(resolvedStudents);
+
         if (plan?.sessions.length) {
           const sorted = [...plan.sessions].sort(
             (a, b) => new Date(a.plannedDate).getTime() - new Date(b.plannedDate).getTime(),
           );
-          const next = sorted.find((session) => session.status !== 'completed') ?? sorted[sorted.length - 1];
-          setSelectedSessionId(next?.id ?? null);
+          if (activeSession?.cycleSessionIds?.length) {
+            setSelectedSessionId(activeSession.cycleSessionIds[0]);
+          } else if (activeSession?.missionCardIds?.length) {
+            const matching = sorted.find((session) =>
+              activeSession.missionCardIds?.includes(session.missionCardId),
+            );
+            if (matching) {
+              setSelectedSessionId(matching.id);
+            } else {
+              const next =
+                sorted.find((session) => session.status !== 'completed') ?? sorted[sorted.length - 1];
+              setSelectedSessionId(next?.id ?? null);
+            }
+          } else {
+            const next =
+              sorted.find((session) => session.status !== 'completed') ?? sorted[sorted.length - 1];
+            setSelectedSessionId(next?.id ?? null);
+          }
         } else {
           setSelectedSessionId(null);
         }
 
-        const history = await sessionsRepo.listByClass(classId);
-        if (!disposed) {
-          const lastClosed = [...history].filter((item) => item.closed).pop();
-          setPreviousSpeedRecords(lastClosed?.speed ?? []);
+        if (activeSession) {
+          restoreActiveSession(activeSession, resolvedStudents);
+        } else {
+          setSession(null);
+          setAttendance([]);
+          setSpeedRows([]);
+          setFreestyle([]);
+          setConsumeOverrides({});
+          setAttendanceAwarded(false);
+          setBlockCompletion({});
+          setPendingFlip(null);
+          setFlippingCardId(null);
+          setStatus(null);
+          setPendingStudentId('');
         }
       } catch (error) {
         console.error('加载训练营详情失败', error);
@@ -979,7 +1087,7 @@ export function ClassDetailPage() {
     return () => {
       disposed = true;
     };
-  }, [classId, reloadToken]);
+  }, [classId, reloadToken, restoreActiveSession]);
 
   useEffect(() => {
     if (!cyclePlan) {
@@ -1051,8 +1159,10 @@ export function ClassDetailPage() {
       performance: [],
       closed: false,
       lessonConsume: 1,
+      attendanceEnergyAwarded: false,
     };
     setSession(newSession);
+    fallbackSessionDateRef.current = newSession.date;
     setAttendance(newSession.attendance);
     setSpeedRows([]);
     setPerformanceDrafts(() => {
@@ -1069,17 +1179,82 @@ export function ClassDetailPage() {
     });
     setBlockCompletion(completionMap);
     setConsumeOverrides({});
-    setStatus(null);
+    setStatus('本次挑战已开启，可随时离开页面继续');
     setAttendanceAwarded(false);
     setPendingFlip(null);
     setFlippingCardId(null);
     setPuzzleQuest(null);
     setPuzzleTemplate(null);
+    setPendingStudentId('');
+    void sessionsRepo.upsert(newSession);
   };
 
   const addFreestyle = (draft: Omit<FreestyleDraft, "id">) => {
     setFreestyle((prev) => [...prev, { ...draft, id: generateId() }]);
   };
+
+  const buildPerformanceArtifacts = useCallback(
+    (updatedAt: string) => {
+      const performanceEntries: SessionPerformanceEntry[] = [];
+      const notes: TrainingNote[] = [];
+      students.forEach((student) => {
+        const draft = performanceDrafts[student.id] ?? createEmptyPerformanceDraft();
+        const dimensionScores = PERFORMANCE_DIMENSIONS.map((dimension) => ({
+          dimension: dimension.id,
+          score: draft.dimensionScores[dimension.id] ?? DEFAULT_PERFORMANCE_SCORE,
+        }));
+        const presetIds = draft.presetIds ?? [];
+        const noteId = draft.noteId ?? generateId();
+        const performanceId = draft.performanceId ?? generateId();
+        const entry: SessionPerformanceEntry = {
+          id: performanceId,
+          studentId: student.id,
+          stars: draft.stars,
+          presetIds,
+          comment: draft.comment.trim() ? draft.comment.trim() : undefined,
+          noteId,
+          attendance: attendance.find((item) => item.studentId === student.id)?.present
+            ? 'present'
+            : 'absent',
+          dimensions: dimensionScores,
+          updatedAt,
+        };
+        performanceEntries.push(entry);
+
+        const highlightLabels = presetIds
+          .map((id) => PERFORMANCE_PRESET_LOOKUP[id])
+          .filter((preset) => preset?.tone === 'highlight')
+          .map((preset) => preset!.label);
+        const focusLabels = presetIds
+          .map((id) => PERFORMANCE_PRESET_LOOKUP[id])
+          .filter((preset) => preset?.tone === 'focus')
+          .map((preset) => preset!.label);
+        const dimensionSummary = dimensionScores
+          .map((item) => {
+            const meta = PERFORMANCE_DIMENSIONS.find((dimension) => dimension.id === item.dimension);
+            return `${meta?.label ?? item.dimension}${item.score}分`;
+          })
+          .join('｜');
+        const commentParts = [dimensionSummary];
+        if (highlightLabels.length) commentParts.push(`亮点：${highlightLabels.join('、')}`);
+        if (focusLabels.length) commentParts.push(`关注：${focusLabels.join('、')}`);
+        if (entry.comment) commentParts.push(entry.comment);
+
+        notes.push({
+          id: noteId,
+          studentId: student.id,
+          rating: entry.stars,
+          comments: commentParts.join(' / '),
+          tags: highlightLabels,
+        });
+      });
+      return { performanceEntries, notes };
+    },
+    [attendance, performanceDrafts, students],
+  );
+
+
+
 
   const handleOverrideChange = (studentId: string, consume?: number) => {
     setConsumeOverrides((prev) => {
@@ -1092,6 +1267,67 @@ export function ClassDetailPage() {
       return next;
     });
   };
+
+  const handleAddStudent = useCallback(() => {
+    if (!pendingStudentId) return;
+    const candidate = allStudents.find((student) => student.id === pendingStudentId);
+    if (!candidate) return;
+
+    
+
+
+    setStudents((prev) => {
+      if (prev.some((student) => student.id === candidate.id)) {
+        return prev;
+      }
+      return [...prev, candidate];
+    });
+
+    
+
+
+    setAttendance((prev) => {
+      if (prev.some((item) => item.studentId === candidate.id)) {
+        return prev;
+      }
+      return [...prev, { studentId: candidate.id, present: true }];
+    });
+
+    
+
+    setPerformanceDrafts((prev) => {
+      if (prev[candidate.id]) {
+        return prev;
+      }
+      return { ...prev, [candidate.id]: createEmptyPerformanceDraft() };
+    });
+
+    setSession((prev) => {
+      if (!prev || prev.closed) return prev;
+      if (prev.attendance.some((item) => item.studentId === candidate.id)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        attendance: [...prev.attendance, { studentId: candidate.id, present: true }],
+      };
+    });
+
+    setPendingFlip((prev) => {
+      if (!prev) return prev;
+      if (prev.participantIds.includes(candidate.id)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        participantIds: [...prev.participantIds, candidate.id],
+      };
+    });
+
+
+    setStatus(`已添加 ${candidate.name} 加入课堂`);
+    setPendingStudentId('');
+  }, [allStudents, pendingStudentId]);
 
   const handleClose = async () => {
     if (!session) return;
@@ -1107,59 +1343,7 @@ export function ClassDetailPage() {
       .map(([blockId]) => blockId);
 
     const now = new Date().toISOString();
-    const performanceEntries: SessionPerformanceEntry[] = [];
-    const notes: TrainingNote[] = [];
-
-    students.forEach((student) => {
-      const draft = performanceDrafts[student.id] ?? createEmptyPerformanceDraft();
-      const dimensionScores = PERFORMANCE_DIMENSIONS.map((dimension) => ({
-        dimension: dimension.id,
-        score: draft.dimensionScores[dimension.id] ?? DEFAULT_PERFORMANCE_SCORE,
-      }));
-      const presetIds = draft.presetIds ?? [];
-      const noteId = draft.noteId ?? generateId();
-      const entry: SessionPerformanceEntry = {
-        id: draft.performanceId ?? generateId(),
-        studentId: student.id,
-        stars: draft.stars,
-        presetIds,
-        comment: draft.comment.trim() ? draft.comment.trim() : undefined,
-        noteId,
-        attendance: attendance.find((item) => item.studentId === student.id)?.present
-          ? 'present'
-          : 'absent',
-        dimensions: dimensionScores,
-        updatedAt: now,
-      };
-      performanceEntries.push(entry);
-
-      const highlightLabels = presetIds
-        .map((id) => PERFORMANCE_PRESET_LOOKUP[id])
-        .filter((preset) => preset?.tone === 'highlight')
-        .map((preset) => preset!.label);
-      const focusLabels = presetIds
-        .map((id) => PERFORMANCE_PRESET_LOOKUP[id])
-        .filter((preset) => preset?.tone === 'focus')
-        .map((preset) => preset!.label);
-      const dimensionSummary = dimensionScores
-        .map((item) => {
-          const meta = PERFORMANCE_DIMENSIONS.find((dimension) => dimension.id === item.dimension);
-          return `${meta?.label ?? item.dimension}${item.score}分`;
-        })
-        .join('｜');
-      const commentParts = [dimensionSummary];
-      if (highlightLabels.length) commentParts.push(`亮点：${highlightLabels.join('、')}`);
-      if (focusLabels.length) commentParts.push(`关注：${focusLabels.join('、')}`);
-      if (entry.comment) commentParts.push(entry.comment);
-
-      notes.push({
-        id: noteId,
-        studentId: student.id,
-        rating: entry.stars,
-        comments: commentParts.join(' / '),
-        tags: highlightLabels,
-      });
-    });
+    const { performanceEntries, notes } = buildPerformanceArtifacts(now);
 
     const record: SessionRecord = {
       ...session,
@@ -1407,6 +1591,71 @@ export function ClassDetailPage() {
   };
 
 
+
+  useEffect(() => {
+    if (!session || session.closed) return;
+    const overrides = Object.entries(consumeOverrides)
+      .filter(([, value]) => value !== undefined)
+      .map(([studentId, consume]) => ({
+        studentId,
+        consume: Number(consume),
+      }));
+    const executedBlockIds = Object.entries(blockCompletion)
+      .filter(([, done]) => done)
+      .map(([blockId]) => blockId);
+    const now = new Date().toISOString();
+    const { performanceEntries, notes } = buildPerformanceArtifacts(now);
+    const record: SessionRecord = {
+      ...session,
+      attendance,
+      speed: speedRows.map((row) => ({
+        id: `${row.studentId}-${row.mode}-${row.window}`,
+        studentId: row.studentId,
+        mode: row.mode,
+        window: row.window,
+        reps: row.reps,
+      })),
+      freestyle: freestyle.map((item) => ({
+        id: item.id,
+        studentId: item.studentId,
+        moveId: item.moveId,
+        passed: item.passed,
+        note: item.note,
+      })),
+      notes,
+      performance: performanceEntries,
+      consumeOverrides: overrides.length ? overrides : undefined,
+      executedBlockIds: executedBlockIds.length ? executedBlockIds : undefined,
+      highlights: deriveHighlights(),
+      attendanceEnergyAwarded: attendanceAwarded,
+    };
+    void (async () => {
+      try {
+        await sessionsRepo.upsert(record);
+      } catch (error) {
+        console.error('保存课堂进度失败', error);
+      }
+    })();
+  }, [
+    session,
+    attendance,
+    speedRows,
+    freestyle,
+    consumeOverrides,
+    blockCompletion,
+    buildPerformanceArtifacts,
+    deriveHighlights,
+    attendanceAwarded,
+  ]);
+
+  useEffect(() => {
+    setSession((prev) => {
+      if (!prev || prev.closed) return prev;
+      if (prev.attendanceEnergyAwarded === attendanceAwarded) return prev;
+      return { ...prev, attendanceEnergyAwarded: attendanceAwarded };
+    });
+  }, [attendanceAwarded]);
+
   const handleAttendanceEnergy = async () => {
     const presentStudentIds = attendance
       .filter((item) => item.present)
@@ -1488,6 +1737,50 @@ export function ClassDetailPage() {
       : '尚未生成课表';
   const missionName = selectedMission?.name ?? template?.name ?? '欢乐任务卡';
   const missionBlockCount = missionBlockEntries.length;
+  const shareHighlights = session?.highlights?.length
+    ? session.highlights
+    : deriveHighlights();
+  const focusTags = Array.from(
+    new Set(
+      Object.values(performanceDrafts).flatMap((draft) =>
+        (draft?.presetIds ?? [])
+          .map((id) => PERFORMANCE_PRESET_LOOKUP[id])
+          .filter((preset) => preset?.tone === 'focus')
+          .map((preset) => preset!.label),
+      ),
+    ),
+  ).slice(0, 4);
+  const starSummaries = students.map((student) => {
+    const draft = performanceDrafts[student.id];
+    return {
+      name: student.name,
+      stars: draft?.stars ?? DEFAULT_PERFORMANCE_SCORE,
+    };
+  });
+  const averageStars = starSummaries.length
+    ? starSummaries.reduce((total, item) => total + item.stars, 0) / starSummaries.length
+    : null;
+  const starLeaders = [...starSummaries]
+    .sort((a, b) => {
+      if (b.stars !== a.stars) return b.stars - a.stars;
+      return a.name.localeCompare(b.name, 'zh-CN');
+    })
+    .slice(0, 3);
+  const presentStudentIds = new Set(attendance.filter((item) => item.present).map((item) => item.studentId));
+  const energyLeader = students
+    .filter((student) => presentStudentIds.has(student.id))
+    .reduce<{ name: string; energy: number } | null>((best, student) => {
+      const energy = student.energy ?? 0;
+      if (!best || energy > best.energy) {
+        return { name: student.name, energy };
+      }
+      return best;
+    }, null);
+  const absentNames = attendance
+    .filter((item) => !item.present)
+    .map((item) => students.find((student) => student.id === item.studentId)?.name)
+    .filter((name): name is string => Boolean(name));
+  const sessionDateForShare = session?.date ?? fallbackSessionDateRef.current;
 
   return (
     <div className="space-y-6">
@@ -1504,15 +1797,15 @@ export function ClassDetailPage() {
                 </span>
               ) : null}
             </div>
-            <h1 className="text-3xl font-black drop-shadow-sm">
+            <h1 className="text-2xl font-black drop-shadow-sm md:text-3xl">
               {classEntity?.name ?? '训练营作战台'}
             </h1>
-            <p className="max-w-xl text-sm text-white/80">
+            <p className="max-w-xl text-xs text-white/80 md:text-sm">
               主教练：{classEntity?.coachName ?? '未设置'} · 训练时间：
               {classEntity?.schedule ?? '未设置'}
             </p>
             {cyclePlan?.goal ? (
-              <p className="max-w-xl text-sm text-white/80">
+              <p className="max-w-xl text-xs text-white/80 md:text-sm">
                 🌟 {cyclePlan.goal}
               </p>
             ) : null}
@@ -1528,7 +1821,7 @@ export function ClassDetailPage() {
                   <span>今日勇士</span>
                   <span className="text-lg">🧑‍🚀</span>
                 </div>
-                <p className="mt-2 text-2xl font-black">
+                <p className="mt-2 text-xl font-black md:text-2xl">
                   {presentCount}
                   <span className="ml-1 text-base font-semibold text-white/70">/{studentCount}</span>
                 </p>
@@ -1539,7 +1832,7 @@ export function ClassDetailPage() {
                   <span>今日任务</span>
                   <span className="text-lg">🪐</span>
                 </div>
-                <p className="mt-2 text-lg font-semibold leading-snug">{missionName}</p>
+                <p className="mt-2 text-base font-semibold leading-snug md:text-lg">{missionName}</p>
                 <p className="mt-1 text-xs text-white/70">
                   {cyclePlan ? `第${cyclePlan.currentWeek}周目标` : '等待选择任务'}
                 </p>
@@ -1549,7 +1842,7 @@ export function ClassDetailPage() {
                   <span>能量池</span>
                   <span className="text-lg">⚡</span>
                 </div>
-                <p className="mt-2 text-2xl font-black">{totalEnergy}</p>
+                <p className="mt-2 text-xl font-black md:text-2xl">{totalEnergy}</p>
                 <p className="mt-1 text-xs text-white/70">勇士已累计的能量值</p>
               </div>
             </div>
@@ -1584,6 +1877,21 @@ export function ClassDetailPage() {
         </div>
       </section>
 
+      <ClassSharePanel
+        className={classEntity.name}
+        coachName={classEntity.coachName}
+        missionName={missionName}
+        sessionDate={sessionDateForShare}
+        presentCount={presentCount}
+        totalCount={studentCount}
+        averageStars={averageStars}
+        energyLeader={energyLeader}
+        highlights={shareHighlights}
+        focusTags={focusTags}
+        starLeaders={starLeaders}
+        absentNames={absentNames}
+      />
+
       <section className="rounded-3xl border border-slate-100/80 bg-white/95 p-6 shadow-lg">
     {cyclePlan ? (
 
@@ -1597,8 +1905,8 @@ export function ClassDetailPage() {
                 {cyclePlan.durationWeeks} 周
               </span>
             </div>
-            <h2 className="text-2xl font-black text-slate-900">{cyclePlan.cycleName}</h2>
-            <p className="max-w-2xl text-sm leading-relaxed text-slate-500">{cyclePlan.goal}</p>
+            <h2 className="text-xl font-black text-slate-900 md:text-2xl">{cyclePlan.cycleName}</h2>
+            <p className="max-w-2xl text-xs leading-relaxed text-slate-500 md:text-sm">{cyclePlan.goal}</p>
 
 
             <div className="flex flex-wrap gap-2">
@@ -1617,22 +1925,22 @@ export function ClassDetailPage() {
               })}
             </div>
           </div>
-          <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[280px]">
-            <div className="rounded-2xl bg-sky-50 p-4 text-sky-700 shadow-sm">
+          <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[240px]">
+            <div className="rounded-2xl bg-sky-50 p-3 text-sky-700 shadow-sm md:p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.2em]">计划周数</p>
-              <p className="mt-2 text-2xl font-black">{cyclePlan.durationWeeks}</p>
+              <p className="mt-2 text-xl font-black md:text-2xl">{cyclePlan.durationWeeks}</p>
               <p className="mt-1 text-xs text-sky-500">{cyclePlan.cycleName}</p>
             </div>
-            <div className="rounded-2xl bg-amber-50 p-4 text-amber-700 shadow-sm">
+            <div className="rounded-2xl bg-amber-50 p-3 text-amber-700 shadow-sm md:p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.2em]">当前进度</p>
-              <p className="mt-2 text-2xl font-black">
+              <p className="mt-2 text-xl font-black md:text-2xl">
                 {selectedSession ? `第${selectedSession.week}周` : `第${cyclePlan.currentWeek}周`}
               </p>
               <p className="mt-1 text-xs text-amber-500">{nextSessionLabel}</p>
             </div>
-            <div className="rounded-2xl bg-emerald-50 p-4 text-emerald-700 shadow-sm">
+            <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700 shadow-sm md:p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.2em]">任务卡</p>
-              <p className="mt-2 text-2xl font-black">{missionChoices.length}</p>
+              <p className="mt-2 text-xl font-black md:text-2xl">{missionChoices.length}</p>
               <p className="mt-1 text-xs text-emerald-500">活跃环节 {missionBlockCount} 个</p>
             </div>
           </div>
@@ -1641,16 +1949,16 @@ export function ClassDetailPage() {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-[0.3em] text-indigo-500">当前周次</p>
-              <p className="text-lg font-bold text-indigo-700">
+              <p className="text-base font-bold text-indigo-700 md:text-lg">
                 {selectedSession ? `第${selectedSession.week}周` : `第${cyclePlan.currentWeek}周`}
               </p>
-              <p className="text-xs text-indigo-400">计划日期：{selectedSession ? formatDate(selectedSession.plannedDate) : '未排期'}</p>
+              <p className="text-xs text-indigo-400 md:text-sm">计划日期：{selectedSession ? formatDate(selectedSession.plannedDate) : '未排期'}</p>
             </div>
             <div className="space-y-2 text-left sm:text-right">
               <p className="text-xs font-semibold uppercase tracking-[0.3em] text-pink-500">今日任务卡</p>
-              <p className="text-lg font-bold text-pink-600">{selectedMission?.name ?? '请选择任务卡'}</p>
+              <p className="text-base font-bold text-pink-600 md:text-lg">{selectedMission?.name ?? '请选择任务卡'}</p>
               {selectedMission?.durationMin ? (
-                <p className="text-xs text-pink-400">建议时长 {selectedMission.durationMin} 分钟</p>
+                <p className="text-xs text-pink-400 md:text-sm">建议时长 {selectedMission.durationMin} 分钟</p>
               ) : null}
             </div>
           </div>
@@ -1672,12 +1980,12 @@ export function ClassDetailPage() {
               <span className="text-xs text-indigo-400">选择任务卡后可查看主攻素质</span>
             )}
           </div>
-          <label className="mt-4 block text-xs font-semibold uppercase tracking-[0.2em] text-indigo-500">
+          <label className="mt-4 block text-xs font-semibold uppercase tracking-[0.2em] text-indigo-500 md:text-sm">
             <span>切换本节任务</span>
             <select
               value={selectedSessionId ?? ''}
               onChange={(event) => setSelectedSessionId(event.target.value || null)}
-              className="mt-2 w-full rounded-2xl border-none bg-white/90 px-4 py-2 text-sm font-semibold text-indigo-600 shadow-inner focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              className="mt-2 w-full rounded-2xl border-none bg-white/90 px-4 py-2 text-base font-semibold text-indigo-600 shadow-inner focus:outline-none focus:ring-2 focus:ring-indigo-300"
             >
               <option value="">请选择任务卡</option>
               {missionChoices.map((choice, index) => (
@@ -1714,7 +2022,7 @@ export function ClassDetailPage() {
               <p className="mt-1 text-sm text-slate-500">聚焦当前课节的热身、速度、爆发力与游戏内容，滑动切换不同环节。</p>
             </div>
             {selectedSession ? (
-              <div className="flex items-center gap-2 text-sm">
+              <div className="flex items-center gap-2 text-base">
                 <button
                   type="button"
                   onClick={() => previousSession && setSelectedSessionId(previousSession.id)}
@@ -1850,7 +2158,7 @@ export function ClassDetailPage() {
                     })}
                   </div>
                 ) : null}
-              <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600 sm:text-base">
+              <div className="flex flex-wrap items-center gap-3 text-base text-slate-600 sm:text-lg">
                 <span className="rounded-full bg-slate-100 px-4 py-1.5 font-semibold text-slate-700">
                   第{currentSessionPlan.week}周
                 </span>
@@ -1874,8 +2182,8 @@ export function ClassDetailPage() {
               </div>
               <div>
                 <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-semibold text-slate-500">训练环节</h4>
-                  <span className="text-xs text-slate-400">向左 / 向右滑动切换</span>
+                  <h4 className="text-base font-semibold text-slate-500 md:text-lg">训练环节</h4>
+                  <span className="text-xs text-slate-400 md:text-sm">向左 / 向右滑动切换</span>
                 </div>
                 <div className="mt-3 overflow-x-auto pb-2">
                   <div className="flex gap-3 pb-1">
@@ -1888,27 +2196,27 @@ export function ClassDetailPage() {
                           key={block.key}
                           type="button"
                           onClick={() => setActiveBlockKey(block.key)}
-                          className={`min-w-[220px] rounded-2xl border px-4 py-3 text-left transition ${
+                          className={`min-w-[260px] rounded-2xl border px-5 py-4 text-left transition ${
                             isActive
                               ? 'border-purple-400 bg-purple-50 text-purple-700 shadow-md'
                               : 'border-slate-200 bg-white text-slate-600 hover:border-purple-200 hover:text-purple-600'
                           }`}
                         >
                           <div className="flex items-start justify-between gap-3">
-                            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-lg font-bold shadow-sm">
+                            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-2xl font-extrabold shadow-sm">
                               {String(index + 1).padStart(2, '0')}
                             </span>
                             <div className="space-y-1">
-                              <p className="text-lg font-semibold">{block.title}</p>
-                              <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <p className="text-xl font-semibold">{block.title}</p>
+                              <div className="flex flex-wrap items-center gap-2 text-sm">
                                 {block.duration ? <span>时长 {block.duration} 分钟</span> : null}
                                 {stimulusLabel ? (
-                                  <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-semibold">
+                                  <span className="rounded-full bg-white/70 px-2 py-0.5 text-sm font-semibold">
                                     {stimulusLabel} 刺激
                                   </span>
                                 ) : null}
                                 {intensityMeta ? (
-                                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${intensityMeta.bg}`}>
+                                  <span className={`rounded-full px-2 py-0.5 text-sm font-semibold ${intensityMeta.bg}`}>
                                     {block.intensity} {intensityMeta.label}
                                   </span>
                                 ) : null}
@@ -1925,41 +2233,41 @@ export function ClassDetailPage() {
                 <div className="rounded-3xl border border-purple-100 bg-gradient-to-br from-white via-white to-purple-50 p-6 shadow-sm">
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div>
-                      <p className="text-sm font-semibold text-purple-500">{currentSessionPlan.missionName}</p>
-                      <h4 className="mt-1 text-2xl font-bold text-slate-900">{activeBlock.title}</h4>
-                      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+                      <p className="text-base font-semibold text-purple-500 md:text-lg">{currentSessionPlan.missionName}</p>
+                      <h4 className="mt-1 text-3xl font-bold text-slate-900">{activeBlock.title}</h4>
+                      <div className="mt-3 flex flex-wrap items-center gap-3 text-base text-slate-600">
                         {activeBlock.duration ? <span>建议 {activeBlock.duration} 分钟</span> : null}
                         {activeStimulusLabel ? (
-                          <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                          <span className="rounded-full bg-white px-3 py-1 text-sm font-semibold text-slate-600">
                             {activeStimulusLabel} 刺激
                           </span>
                         ) : null}
                         {activeIntensityMeta ? (
-                          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${activeIntensityMeta.bg}`}>
+                          <span className={`rounded-full px-3 py-1 text-sm font-semibold ${activeIntensityMeta.bg}`}>
                             {activeBlock.intensity} {activeIntensityMeta.label}
                           </span>
                         ) : null}
                       </div>
                     </div>
                   </div>
-                  <div className="mt-6 grid gap-6 lg:grid-cols-2">
+                  <div className={`mt-6 grid grid-cols-1 gap-6 ${activeBlockColumnsClass}`}>
                     {activeBlock.drills.length ? (
                       <div className="space-y-3">
-                        <p className="text-base font-semibold text-slate-700">训练动作</p>
-                        <ul className="space-y-4 text-slate-700">
+                        <p className="text-xl font-semibold text-slate-700">训练动作</p>
+                        <ul className="space-y-4 text-lg text-slate-700">
                           {activeBlock.drills.map((drill) => (
                             <li key={drill.id} className="rounded-2xl bg-white/80 p-4 shadow-sm">
-                              <p className="text-lg font-bold text-slate-900">
+                              <p className="text-2xl font-bold text-slate-900">
                                 {drill.name}
-                                <span className="ml-2 text-sm font-medium text-slate-500">
+                                <span className="ml-3 text-base font-medium text-slate-500">
                                   {drill.durationMin} 分钟 · {INTENSITY_META[drill.intensity]?.label}
                                 </span>
                               </p>
                               {drill.coachTips ? (
-                                <p className="mt-2 text-sm text-purple-600">教练提示：{drill.coachTips}</p>
+                                <p className="mt-3 text-base text-purple-600">教练提示：{drill.coachTips}</p>
                               ) : null}
                               {drill.equipment?.length ? (
-                                <p className="mt-2 text-sm text-slate-500">器材：{drill.equipment.join('、')}</p>
+                                <p className="mt-3 text-base text-slate-500">器材：{drill.equipment.join('、')}</p>
                               ) : null}
                             </li>
                           ))}
@@ -1968,24 +2276,24 @@ export function ClassDetailPage() {
                     ) : null}
                     {activeBlock.games.length ? (
                       <div className="space-y-3">
-                        <p className="text-base font-semibold text-slate-700">游戏 / 对抗</p>
-                        <ul className="space-y-4 text-slate-700">
+                        <p className="text-xl font-semibold text-slate-700">游戏 / 对抗</p>
+                        <ul className="space-y-4 text-lg text-slate-700">
                           {activeBlock.games.map((game) => (
                             <li key={game.id} className="rounded-2xl bg-white/80 p-4 shadow-sm">
-                              <p className="text-lg font-bold text-slate-900">
+                              <p className="text-2xl font-bold text-slate-900">
                                 {game.name}
-                                <span className="ml-2 text-sm font-medium text-slate-500">
+                                <span className="ml-3 text-base font-medium text-slate-500">
                                   {game.durationMin} 分钟 · {game.groupSize}
                                 </span>
                               </p>
                               {game.goal ? (
-                                <p className="mt-2 text-sm text-slate-600">目标：{game.goal}</p>
+                                <p className="mt-3 text-base text-slate-600">目标：{game.goal}</p>
                               ) : null}
                               {game.rules ? (
-                                <p className="mt-2 text-sm text-slate-600">玩法：{game.rules}</p>
+                                <p className="mt-3 text-base text-slate-600">玩法：{game.rules}</p>
                               ) : null}
                               {game.coachTips ? (
-                                <p className="mt-2 text-sm text-purple-600">教练提示：{game.coachTips}</p>
+                                <p className="mt-3 text-base text-purple-600">教练提示：{game.coachTips}</p>
                               ) : null}
                             </li>
                           ))}
@@ -1994,13 +2302,13 @@ export function ClassDetailPage() {
                     ) : null}
                   </div>
                   {!activeBlock.drills.length && !activeBlock.games.length ? (
-                    <div className="mt-4 rounded-2xl border border-dashed border-purple-200 bg-white/80 p-6 text-center text-sm text-slate-500">
+                    <div className="mt-4 rounded-2xl border border-dashed border-purple-200 bg-white/80 p-6 text-center text-base text-slate-500">
                       当前环节尚未配置训练内容。
                     </div>
                   ) : null}
                 </div>
               ) : (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-base text-slate-500">
                   请选择上方环节查看详细训练内容。
                 </div>
               )}
@@ -2226,6 +2534,44 @@ export function ClassDetailPage() {
             </div>
             <div className="grid gap-6 xl:grid-cols-[1.05fr,1.4fr]">
               <div className="space-y-4">
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 p-4 text-sm text-slate-600 shadow-sm">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                    <label className="flex-1 text-xs font-semibold text-slate-500">
+                      <span className="block text-[11px] uppercase tracking-[0.3em] text-slate-400">
+                        添加临时学员
+                      </span>
+                      <select
+                        value={pendingStudentId}
+                        onChange={(event) => setPendingStudentId(event.target.value)}
+                        className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-purple-500 focus:outline-none"
+                      >
+                        <option value="">选择勇士加入课堂</option>
+                        {availableStudentsToAdd.map((student) => (
+                          <option key={student.id} value={student.id}>
+                            {student.name} · 段位 L{student.currentRank ?? '-'}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleAddStudent}
+                      disabled={!pendingStudentId || !availableStudentsToAdd.length}
+                      className="rounded-lg bg-brand-500 px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      添加到课堂
+                    </button>
+                  </div>
+                  {availableStudentsToAdd.length ? (
+                    <p className="mt-2 text-[11px] text-slate-400">
+                      临时添加的勇士仅参与本次课堂，不会改变训练营常规名单。
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-[11px] text-slate-400">
+                      所有勇士均已在课堂中，可在成长册中创建新学员后再加入。
+                    </p>
+                  )}
+                </div>
                 <AttendanceGrid
                   students={students}
                   value={attendance}
@@ -2381,7 +2727,7 @@ export function ClassDetailPage() {
           <div className="w-full max-w-3xl rounded-3xl bg-white p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-purple-400">FlipQuest</p>
+                <p className="text-xs uppercase tracking-[0.3em] text-purple-400">翻牌任务</p>
                 <h3 className="mt-1 text-2xl font-bold text-slate-900">翻开「{pendingFlipCard.title}」</h3>
                 <p className="mt-2 text-sm text-slate-500">
                   选择参与的勇士，能量将按人数自动平分。
