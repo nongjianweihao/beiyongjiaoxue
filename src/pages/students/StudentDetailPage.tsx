@@ -426,14 +426,6 @@ export function StudentDetailPage() {
     [allStudents],
   );
 
-  const rankMoveLookup = useMemo(
-    () =>
-      Object.fromEntries(
-        rankMoves.map((move) => [move.id, { rank: move.rank, name: move.name }]),
-      ),
-    [rankMoves],
-  );
-
   const lessonSessionRows = useMemo<LessonSessionRecord[]>(() => {
     return sessions
       .map((session) => {
@@ -457,21 +449,10 @@ export function StudentDetailPage() {
         const speedHighlight = speedRecord
           ? `${speedRecord.window}s ${speedRecord.mode === 'single' ? '单摇' : '双摇'} ${speedRecord.reps}`
           : undefined;
-        const freestyleHighlights = session.freestyle
-          .filter((record) => record.studentId === studentId && record.passed)
-          .map((record) => {
-            const move = rankMoveLookup[record.moveId];
-            const moveLabel = move?.name ? `挑战通关 ${move.name}` : '挑战通关';
-            const note = record.note?.trim();
-            return note ? `${moveLabel}（${note}）` : moveLabel;
-          });
         const coachNote = session.notes.find((note) => note.studentId === studentId)?.comments?.trim();
         const detailParts: string[] = [];
         if (speedHighlight) {
           detailParts.push(`速度亮点 ${speedHighlight}`);
-        }
-        if (freestyleHighlights.length) {
-          detailParts.push(`挑战记录：${freestyleHighlights.join('；')}`);
         }
         if (coachNote) {
           detailParts.push(`教练鼓励：${coachNote}`);
@@ -488,7 +469,7 @@ export function StudentDetailPage() {
       })
       .filter((item): item is LessonSessionRecord => Boolean(item))
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [sessions, studentId, classLookup, templateLookup, rankMoveLookup]);
+  }, [sessions, studentId, classLookup, templateLookup]);
 
   const speedSeriesByWindow = useMemo<Record<WindowSec, SpeedSeriesBundle>>(
     () => {
@@ -505,6 +486,13 @@ export function StudentDetailPage() {
   const speedSeriesSingle = speedSeriesByWindow[selectedWindow]?.single ?? [];
   const speedSeriesDouble = speedSeriesByWindow[selectedWindow]?.double ?? [];
   const speedSeriesSingle30 = speedSeriesByWindow[30]?.single ?? [];
+  const rankMoveLookup = useMemo(
+    () =>
+      Object.fromEntries(
+        rankMoves.map((move) => [move.id, { rank: move.rank, name: move.name }]),
+      ),
+    [rankMoves],
+  );
   const freestyleRankSeries = useMemo(
     () => buildRankTrajectory(sessions, studentId, rankMoveLookup),
     [sessions, studentId, rankMoveLookup],
@@ -1006,7 +994,7 @@ export function StudentDetailPage() {
           >
             编辑勇士
           </Link>
-          <ExportPdfButton targetId="student-report" filename={`${student?.name ?? '学员'}-report.pdf`} />
+          <ExportPdfButton targetId="student-report" filename={`${student?.name ?? 'student'}-report.pdf`} />
         </div>
       </div>
 
@@ -1036,7 +1024,7 @@ export function StudentDetailPage() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label="当前速度段位" value={speedRank ? `L${speedRank}` : '未入段'} />
             <StatCard
-              label="30 秒单摇最好成绩"
+              label="30s 单摇 best"
               value={bestSingle30 ? `${bestSingle30} 次` : '暂无成绩'}
             />
             <StatCard label="勇士进阶积分" value={`${pointsSummary.total} 分`} />
@@ -1579,7 +1567,7 @@ export function StudentDetailPage() {
                 <p className="text-xs text-slate-500">课堂行为奖励、挑战积分等构成勇士荣耀值</p>
               </div>
               <div className="rounded-2xl bg-white/70 px-4 py-2 text-right shadow-sm">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-violet-400">积分值</p>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-violet-400">Points</p>
                 <p className="text-xl font-bold text-violet-600">{pointsSummary.total}</p>
               </div>
             </div>
@@ -1633,7 +1621,7 @@ export function StudentDetailPage() {
                 <p className="text-xs text-slate-500">记录出勤连击、任务评星、战队激励等成长值沉淀</p>
               </div>
               <div className="rounded-2xl bg-white/70 px-4 py-2 text-right shadow-sm">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-amber-400">能量值</p>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-amber-400">Energy</p>
                 <p className="text-xl font-bold text-amber-500">{energy}</p>
               </div>
             </div>
@@ -1906,7 +1894,7 @@ function FreestylePassCard({
               
               <span className="rounded-full bg-white/10 px-2 py-1 font-medium">待翻开盲卡</span>
 
-              <span className="mt-2 text-[10px] tracking-[0.25em]">继续加油</span>
+              <span className="mt-2 text-[10px] tracking-[0.25em]">KEEP TRYING</span>
             </div>
           )}
         </div>

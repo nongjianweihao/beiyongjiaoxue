@@ -37,7 +37,7 @@ export function ProgressChart({
     }
     return [
       {
-        label: '得分',
+        label: 'score',
         color,
         data: input as SeriesPoint[],
       },

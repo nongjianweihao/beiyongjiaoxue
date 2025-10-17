@@ -41,13 +41,6 @@ const STIMULUS_LABEL: Record<string, string> = {
   technical: '技术',
   psychological: '心理',
 };
-const PERIOD_LABEL: Record<string, string> = {
-  PREP: '备战期',
-  SPEC: '专项期',
-  COMP: '比赛期',
-  TRANS: '过渡期',
-  ALL: '全阶段',
-};
 
 const abilityOrder: AbilityKey[] = ['speed', 'power', 'coordination', 'agility', 'endurance', 'flexibility'];
 
@@ -55,7 +48,7 @@ const abilityOrder: AbilityKey[] = ['speed', 'power', 'coordination', 'agility',
 const PUZZLE_CATEGORY_META: Record<PuzzleCategory, { label: string; accent: string; description: string }> = {
   poem: { label: '诗词文化', accent: 'from-amber-400 to-orange-500', description: '分句拼读，适合语文拓展与低年级课堂。' },
   motivation: { label: '激励语录', accent: 'from-pink-400 to-rose-500', description: '成长语句逐条解锁，强化坚持和复盘。' },
-  emoji: { label: '表情暗语', accent: 'from-purple-400 to-fuchsia-500', description: '符号猜词，适合7-12岁调动节奏。' },
+  emoji: { label: 'Emoji 暗语', accent: 'from-purple-400 to-fuchsia-500', description: '符号猜词，适合7-12岁调动节奏。' },
   mosaic: { label: '图腾拼片', accent: 'from-sky-400 to-cyan-500', description: '能量碎片点亮图腾，适合团队协作。' },
   story: { label: '情境故事', accent: 'from-indigo-400 to-blue-500', description: '章节剧情推进，营造课堂主线感。' },
   math: { label: '逻辑数锁', accent: 'from-emerald-400 to-teal-500', description: '等式线索与体能练习结合。' },
@@ -68,11 +61,11 @@ const PUZZLE_CATEGORY_META: Record<PuzzleCategory, { label: string; accent: stri
 };
 
 const DIFFICULTY_LABEL: Record<1 | 2 | 3 | 4 | 5, string> = {
-  1: '等级1',
-  2: '等级2',
-  3: '等级3',
-  4: '等级4',
-  5: '等级5',
+  1: 'Lv.1',
+  2: 'Lv.2',
+  3: 'Lv.3',
+  4: 'Lv.4',
+  5: 'Lv.5',
 };
 
 
@@ -380,7 +373,7 @@ export function TrainingLibraryPage() {
     <div className="space-y-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-bold text-slate-900">勇士训练资产库</h1>
-        <p className="text-sm text-slate-500">六大素质 × 动作 × 游戏 × 课节模板 × 周期模板，构建完整的勇士绳能表现体系。</p>
+        <p className="text-sm text-slate-500">六大素质 × 动作 × 游戏 × 课节模板 × 周期模板，构建完整的 Speed Rope Performance System。</p>
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <button
             type="button"
@@ -607,9 +600,7 @@ export function TrainingLibraryPage() {
                               >
                                 <div className="flex items-center justify-between">
                                   <span className="text-sm font-semibold text-slate-800">{theme.title}</span>
-                                <span className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
-                                  {PERIOD_LABEL[theme.period] ?? theme.period}
-                                </span>
+                                  <span className="text-[11px] uppercase tracking-[0.2em] text-slate-400">{theme.period}</span>
                                 </div>
                                 <p className="mt-1 text-[11px] text-slate-500">{theme.focus}</p>
                                 <span className="mt-2 inline-flex w-fit items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">
@@ -904,7 +895,7 @@ export function TrainingLibraryPage() {
                         <article key={mission.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                         <header className="flex items-start justify-between">
                           <div>
-                            <p className="text-xs text-slate-400">阶段：{PERIOD_LABEL[mission.phase] ?? mission.phase}</p>
+                            <p className="text-xs text-slate-400">阶段：{mission.phase}</p>
                             <h4 className="text-base font-semibold text-slate-800">{mission.name}</h4>
                             <p className="text-xs text-slate-500">时长 {mission.durationMin} 分钟</p>
                           </div>
@@ -974,7 +965,7 @@ export function TrainingLibraryPage() {
               {stageBuckets.map((bucket) => (
                 <div key={bucket.key} className="space-y-4">
                   <div>
-                    <p className="text-xs uppercase tracking-[0.3em] text-slate-400">所属阶段</p>
+                    <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Phase</p>
                     <h3 className="text-xl font-semibold text-slate-900">{bucket.title}</h3>
                     <p className="text-sm text-slate-500">{bucket.description}</p>
                   </div>
@@ -1035,7 +1026,7 @@ export function TrainingLibraryPage() {
                                 >
                                   <div className="flex items-start justify-between text-sm">
                                     <div>
-                                      <p className="text-xs uppercase tracking-[0.2em] text-slate-400">第 {week.week} 周</p>
+                                      <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Week {week.week}</p>
                                       <p className="font-semibold text-slate-800">{week.focus}</p>
                                     </div>
                                     <div className="text-right text-xs text-slate-500">
@@ -1115,7 +1106,7 @@ export function TrainingLibraryPage() {
               <div className="space-y-1">
                 <h2 className="text-lg font-semibold text-slate-800">课堂主线谜题库</h2>
                 <p className="text-sm text-slate-500">
-                  已内置 {puzzles.length} 套翻牌主线谜题，可用于课程模板、战队挑战与个人任务的翻牌激励。
+                  已内置 {puzzles.length} 套 FlipQuest 主线谜题，可用于课程模板、战队挑战与个人任务的翻牌激励。
                 </p>
                 {activeCategoryMeta && (
                   <p className="text-xs text-slate-400">当前分类：{activeCategoryMeta.description}</p>
